@@ -9,10 +9,16 @@ class LogStash::Outputs::Mongodb < LogStash::Outputs::Base
 
   # a MongoDB URI to connect to
   # See http://docs.mongodb.org/manual/reference/connection-string/
-  config :uri, :validate => :string, :required => true
+  config :endpoints, :validate => :array, :required => true
   
   # The database to use
   config :database, :validate => :string, :required => true
+
+  # The user to authenticate
+  config :user, :validate => :string, :required => false
+
+  # The password of the user to authenticate
+  config :password, :validate => :string, :required => false
    
   # The collection to use. This value can use `%{foo}` values to dynamically
   # select a collection based on data in the event.
@@ -34,17 +40,10 @@ class LogStash::Outputs::Mongodb < LogStash::Outputs::Base
   public
   def register
     require "mongo"
-    uriParsed=Mongo::URIParser.new(@uri)
-    conn = uriParsed.connection({})
-    if uriParsed.auths.length > 0
-      uriParsed.auths.each do |auth|
-        if !auth['db_name'].nil?
-          conn.add_auth(auth['db_name'], auth['username'], auth['password'], nil)
-        end 
-      end
-      conn.apply_saved_authentication()
-    end
-    @db = conn.db(@database)
+    options = { database: @database }
+    options[:user] = @user unless @user.nil? || @user.empty?
+    options[:password] = @password unless @password.nil? || @password.empty?
+    @client = Mongo::Client.new(@endpoints, options)
   end # def register
 
   public
@@ -62,7 +61,7 @@ class LogStash::Outputs::Mongodb < LogStash::Outputs::Base
       if @generateId
         document['_id'] = BSON::ObjectId.new(nil, event["@timestamp"])
       end
-      @db.collection(event.sprintf(@collection)).insert(document)
+      @client.collection(event.sprintf(@collection)).insert_one(document)
     rescue => e
       @logger.warn("Failed to send event to MongoDB", :event => event, :exception => e,
                    :backtrace => e.backtrace)
